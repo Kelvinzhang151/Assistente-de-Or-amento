@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistente de Orçamento</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f6f8; color: #1f2933; margin: 0; }
+  main { max-width: 520px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 1.5rem; }
+  button { font-size: 1rem; padding: 12px 20px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+  button.gravando { background: #dc2626; }
+  input { font-size: 1rem; padding: 10px; width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+  audio { width: 100%; margin-top: 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Assistente de Orçamento</h1>
+
+  <div class="card">
+    <p>Clique para gravar, fale (ex.: "gastei 25 reais no almoço") e clique de novo para parar.</p>
+    <button id="gravar">Gravar</button>
+    <p id="status"></p>
+    <audio id="resposta" controls></audio>
+  </div>
+
+  <div class="card">
+    <p>Ou escreva:</p>
+    <form id="form-texto">
+      <input id="texto" placeholder="Quanto gastei no total?" autocomplete="off">
+      <button type="submit">Enviar</button>
+    </form>
+    <p id="resposta-texto"></p>
+  </div>
+</main>
+
+<script>
+  const botao = document.getElementById('gravar');
+  const status = document.getElementById('status');
+  const player = document.getElementById('resposta');
+  let gravador = null;
+  let pedacos = [];
+
+  botao.addEventListener('click', async () => {
+    if (gravador && gravador.state === 'recording') {
+      gravador.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      gravador = new MediaRecorder(stream);
+      pedacos = [];
+      gravador.ondataavailable = e => pedacos.push(e.data);
+      gravador.onstop = enviarAudio;
+      gravador.start();
+      botao.textContent = 'Parar';
+      botao.classList.add('gravando');
+      status.textContent = 'Gravando...';
+    } catch (e) {
+      status.textContent = 'Não consegui acessar o microfone.';
+    }
+  });
+
+  async function enviarAudio() {
+    botao.textContent = 'Gravar';
+    botao.classList.remove('gravando');
+    gravador.stream.getTracks().forEach(t => t.stop());
+
+    const extensao = gravador.mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const form = new FormData();
+    form.append('audio', new Blob(pedacos, { type: gravador.mimeType }), 'audio.' + extensao);
+
+    status.textContent = 'Processando...';
+    try {
+      const r = await fetch('/assistente/voz', { method: 'POST', body: form });
+      if (!r.ok) {
+        const erro = await r.json().catch(() => ({}));
+        status.textContent = 'Erro: ' + (erro.erro || r.status);
+        return;
+      }
+      player.src = URL.createObjectURL(await r.blob());
+      player.play();
+      status.textContent = 'Pronto.';
+    } catch (e) {
+      status.textContent = 'Falha ao falar com o servidor.';
+    }
+  }
+
+  document.getElementById('form-texto').addEventListener('submit', async e => {
+    e.preventDefault();
+    const saida = document.getElementById('resposta-texto');
+    saida.textContent = 'Processando...';
+    try {
+      const r = await fetch('/assistente/texto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensagem: document.getElementById('texto').value })
+      });
+      const dados = await r.json();
+      saida.textContent = dados.resposta || ('Erro: ' + (dados.erro || r.status));
+    } catch (err) {
+      saida.textContent = 'Falha ao falar com o servidor.';
+    }
+  });
+</script>
+</body>
+</html>
